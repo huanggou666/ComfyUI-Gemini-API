@@ -10,7 +10,7 @@ from io import BytesIO
 from google import genai
 from google.genai import types
 import traceback
-
+# 支持多图输入
 class GeminiImageGenerator:
     @classmethod
     def INPUT_TYPES(cls):
@@ -25,7 +25,10 @@ class GeminiImageGenerator:
             },
             "optional": {
                 "seed": ("INT", {"default": 66666666, "min": 0, "max": 2147483647}),
-                "image": ("IMAGE",),
+                "image1": ("IMAGE",),
+                "image2": ("IMAGE",),
+                "image3": ("IMAGE",),
+                "image4": ("IMAGE",),
             }
         }
 
@@ -158,7 +161,7 @@ class GeminiImageGenerator:
             traceback.print_exc()
             return None
     
-    def generate_image(self, prompt, api_key, model, width, height, temperature, seed=66666666, image=None):
+    def generate_image(self, prompt, api_key, model, width, height, temperature, seed=66666666, image1=None, image2=None, image3=None, image4=None):
         """生成图像 - 使用简化的API密钥管理"""
         response_text = ""
         
@@ -208,48 +211,37 @@ class GeminiImageGenerator:
             self.log(f"使用温度值: {temperature}，种子值: {seed}")
             
             # 处理参考图像
-            contents = []
+            contents = [simple_prompt]
             has_reference = False
             
-            if image is not None:
-                try:
-                    # 确保图像格式正确
-                    if len(image.shape) == 4 and image.shape[0] == 1:  # [1, H, W, 3] 格式
-                        # 获取第一帧图像
-                        input_image = image[0].cpu().numpy()
-                        
-                        # 转换为PIL图像
-                        input_image = (input_image * 255).astype(np.uint8)
-                        pil_image = Image.fromarray(input_image)
-                        
-                        self.log(f"参考图像处理成功，尺寸: {pil_image.width}x{pil_image.height}")
-                        
-                        # 直接在内存中处理，不保存为文件
-                        img_byte_arr = BytesIO()
-                        pil_image.save(img_byte_arr, format='PNG')
-                        img_byte_arr.seek(0)
-                        image_bytes = img_byte_arr.read()
-                        
-                        # 添加图像部分和文本部分
-                        img_part = {"inline_data": {"mime_type": "image/png", "data": image_bytes}}
-                        txt_part = {"text": simple_prompt + " Use this reference image as style guidance."}
-                        
-                        # 组合内容(图像在前，文本在后)
-                        contents = [img_part, txt_part]
-                        has_reference = True
-                        self.log("参考图像已添加到请求中")
-                    else:
-                        self.log(f"参考图像格式不正确: {image.shape}")
-                        contents = simple_prompt
-                except Exception as img_error:
-                    self.log(f"参考图像处理错误: {str(img_error)}")
-                    contents = simple_prompt
-            else:
-                # 没有参考图像，只使用文本
-                contents = simple_prompt
+            # 处理多张输入图像
+            input_images = [image1, image2, image3, image4]
+            for idx, img in enumerate(input_images, 1):
+                if img is not None:
+                    try:
+                        if len(img.shape) == 4 and img.shape[0] == 1:  # [1, H, W, 3] 格式
+                            input_image = img[0].cpu().numpy()
+                            input_image = (input_image * 255).astype(np.uint8)
+                            pil_image = Image.fromarray(input_image)
+                            
+                            self.log(f"参考图像{idx}处理成功，尺寸: {pil_image.width}x{pil_image.height}")
+                            
+                            # 转换为PIL图像对象
+                            img_byte_arr = BytesIO()
+                            pil_image.save(img_byte_arr, format='PNG')
+                            img_byte_arr.seek(0)
+                            image_bytes = img_byte_arr.read()
+                            
+                            # 添加图像到contents
+                            img_part = {"inline_data": {"mime_type": "image/png", "data": image_bytes}}
+                            contents.append(img_part)
+                            has_reference = True
+                            self.log(f"参考图像{idx}已添加到请求中")
+                    except Exception as img_error:
+                        self.log(f"参考图像{idx}处理错误: {str(img_error)}")
             
             # 打印请求信息
-            self.log(f"请求Gemini API生成图像，种子值: {seed}, 包含参考图像: {has_reference}")
+            self.log(f"请求Gemini API生成图像，种子值: {seed}, 包含参考图像数量: {sum(1 for img in input_images if img is not None)}")
             
             # 调用API
             response = client.models.generate_content(
